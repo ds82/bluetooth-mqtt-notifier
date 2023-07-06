@@ -83,6 +83,7 @@ dependencies = [
  "btleplug",
  "futures",
  "pretty_env_logger",
+ "regex",
  "tokio",
 ]
 
