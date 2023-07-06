@@ -2,11 +2,12 @@
 // Big Sur or later.
 
 use std::error::Error;
+use std::fmt::Display;
 use std::time::Duration;
 use tokio::time;
 
 use btleplug::api::{Central, Manager as _, Peripheral, ScanFilter};
-use btleplug::platform::Manager;
+use btleplug::platform::{Manager, PeripheralId};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -34,15 +35,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             for peripheral in peripherals.iter() {
                 let properties = peripheral.properties().await?;
                 let is_connected = peripheral.is_connected().await?;
-                let id = peripheral.id().toString();
+
+                let id = peripheral.id();
+                let formated_id = format!("{}", id);
+
                 let local_name = properties
                     .unwrap()
                     .local_name
                     .unwrap_or(String::from("(peripheral name unknown)"));
 
                 println!(
-                    "Peripheral {:?} ({:?}) is connected: {:?}",
-                    local_name, id, is_connected
+                    "Peripheral {:?} ({}) is connected: {:?}",
+                    local_name, formated_id, is_connected
                 );
 
                 // if !is_connected {
