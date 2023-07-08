@@ -8,6 +8,8 @@ use std::env;
 use std::error::Error;
 use std::fmt::Display;
 use std::time::Duration;
+use std::time::SystemTime;
+use tokio::runtime::Runtime;
 use tokio::time;
 
 use btleplug::api::{Central, Manager as _, Peripheral, ScanFilter};
@@ -19,18 +21,41 @@ use std::process;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    mqtt_connect();
-    scan_bluetooth().await?;
+    pretty_env_logger::init();
+
+    match mqtt_connect().await {
+        Ok(cli) => {
+            // Connection successful
+            println!("Connected successfully to MQTT server.");
+            // Do something with `cli` here
+            // scan_bluetooth(cli).await?;
+
+            loop {
+                // Call scan_bluetooth
+                if let Err(err) = scan_bluetooth(cli.clone()).await {
+                    eprintln!("Error scanning Bluetooth: {}", err);
+                }
+
+                // Sleep a while
+                tokio::time::sleep(Duration::from_secs(45)).await;
+            }
+        }
+        Err(err) => {
+            // Connection failed
+            eprintln!("Error connecting to the MQTT server: {}", err);
+            process::exit(1);
+        }
+    }
 
     Ok(())
 }
 
-async fn scan_bluetooth() -> Result<(), Box<dyn Error>> {
-    pretty_env_logger::init();
-
+async fn scan_bluetooth(cli: AsyncClient) -> Result<(), Box<dyn Error>> {
     let clean_uuid_re = Regex::new(r"hci[0-9]*\/dev_|_").unwrap();
     let search_for_uuids_env = env::var("SEARCH_UUIDS").unwrap_or(String::from(""));
     let search_for_uuids = search_for_uuids_env.split(",").collect::<Vec<&str>>();
+
+    let publish_on = env::var("MQTT_TOPIC").unwrap_or("bluetooth_scanner".to_string());
 
     let manager = Manager::new().await?;
     let adapter_list = manager.adapters().await?;
@@ -61,19 +86,38 @@ async fn scan_bluetooth() -> Result<(), Box<dyn Error>> {
                 let local_name = properties
                     .unwrap()
                     .local_name
-                    .unwrap_or(String::from("(peripheral name unknown)"));
+                    .unwrap_or(String::from("<unknown>"));
+
+                let systime = get_sys_time();
+
+                if should_publish {
+                    let last_seen_topic =
+                        format!("{}/{}/last_seen", &publish_on, formated_id.as_ref());
+                    let text = format!("{}", systime);
+                    let msg = mqtt::Message::new(last_seen_topic, text, mqtt::QOS_1);
+                    cli.publish(msg).await?;
+                }
 
                 println!(
-                    "found {} [{}] --> {:?}",
-                    formated_id, local_name, should_publish
+                    "{} found {} [{}] --> {:?}",
+                    systime, formated_id, local_name, should_publish
                 );
             }
         }
+
+        adapter.stop_scan().await?;
     }
     Ok(())
 }
 
-fn mqtt_connect() -> () {
+fn get_sys_time() -> u64 {
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => n.as_secs(),
+        Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+    }
+}
+
+async fn mqtt_connect() -> Result<AsyncClient, mqtt::Error> {
     // Command-line option(s)
     let host = env::var("MQTT_HOST").unwrap_or("mqtt://localhost:1883".to_string());
     let user_name = env::var("MQTT_USER").unwrap_or("".to_string());
@@ -87,29 +131,11 @@ fn mqtt_connect() -> () {
         .finalize();
 
     // Create the client
-    let cli = mqtt::AsyncClient::new(create_options).unwrap_or_else(|err| {
-        println!("Error creating the client: {}", err);
-        process::exit(1);
-    });
+    let cli = mqtt::AsyncClient::new(create_options)?;
 
-    if let Err(err) = block_on(async {
-        // Connect with default options and wait for it to complete or fail
-        // The default is an MQTT v3.x connection.
-        println!("Connecting to the MQTT server");
-        cli.connect(connect_options).await?;
+    // Connect with default options and wait for it to complete or fail
+    cli.connect(connect_options).await?;
 
-        // Create a message and publish it
-        println!("Publishing a message on the topic 'test'");
-        let msg = mqtt::Message::new("test", "Hello Rust MQTT world!", mqtt::QOS_1);
-        cli.publish(msg).await?;
-
-        // Disconnect from the broker
-        println!("Disconnecting");
-        cli.disconnect(None).await?;
-
-        // Ok::<(), mqtt::Error>(())
-        Ok::<AsyncClient, mqtt::Error>(cli)
-    }) {
-        eprintln!("{}", err);
-    }
+    // Return the client on successful connection
+    Ok(cli)
 }
