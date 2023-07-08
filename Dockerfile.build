@@ -1,0 +1,8 @@
+FROM debian:stable-slim
+
+WORKDIR /app
+COPY . /app
+
+RUN apt update && apt install --yes build-essential cmake libdbus-1-dev pkg-config libssl-dev curl
+RUN curl RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN cargo build -r
