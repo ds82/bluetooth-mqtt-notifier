@@ -70,39 +70,43 @@ async fn scan_bluetooth(cli: AsyncClient) -> Result<(), Box<dyn Error>> {
             .await
             .expect("Can't scan BLE adapter for connected devices...");
         time::sleep(Duration::from_secs(10)).await;
-        let peripherals = adapter.peripherals().await?;
 
-        if peripherals.is_empty() {
-            eprintln!("->>> BLE peripheral devices were not found, sorry. Exiting...");
-        } else {
-            // All peripheral devices in range
-            for peripheral in peripherals.iter() {
-                let properties = peripheral.properties().await?;
+        loop {
+            let peripherals = adapter.peripherals().await?;
 
-                let id = format!("{}", peripheral.id()).as_str().to_lowercase();
-                let formated_id = clean_uuid_re.replace_all(id.as_str(), "");
-                let should_publish = search_for_uuids.contains(&formated_id.as_ref());
+            if peripherals.is_empty() {
+                eprintln!("->>> BLE peripheral devices were not found, sorry. Exiting...");
+            } else {
+                // All peripheral devices in range
+                for peripheral in peripherals.iter() {
+                    let properties = peripheral.properties().await?;
 
-                let local_name = properties
-                    .unwrap()
-                    .local_name
-                    .unwrap_or(String::from("<unknown>"));
+                    let id = format!("{}", peripheral.id()).as_str().to_lowercase();
+                    let formated_id = clean_uuid_re.replace_all(id.as_str(), "");
+                    let should_publish = search_for_uuids.contains(&formated_id.as_ref());
 
-                let systime = get_sys_time();
+                    let local_name = properties
+                        .unwrap()
+                        .local_name
+                        .unwrap_or(String::from("<unknown>"));
 
-                if should_publish {
-                    let last_seen_topic =
-                        format!("{}/{}/last_seen", &publish_on, formated_id.as_ref());
-                    let text = format!("{}", systime);
-                    let msg = mqtt::Message::new(last_seen_topic, text, mqtt::QOS_1);
-                    cli.publish(msg).await?;
+                    let systime = get_sys_time();
+
+                    if should_publish {
+                        let last_seen_topic =
+                            format!("{}/{}/last_seen", &publish_on, formated_id.as_ref());
+                        let text = format!("{}", systime);
+                        let msg = mqtt::Message::new(last_seen_topic, text, mqtt::QOS_1);
+                        cli.publish(msg).await?;
+                    }
+
+                    println!(
+                        "{} found {} [{}] --> {:?}",
+                        systime, formated_id, local_name, should_publish
+                    );
                 }
-
-                println!(
-                    "{} found {} [{}] --> {:?}",
-                    systime, formated_id, local_name, should_publish
-                );
             }
+            time::sleep(Duration::from_secs(20)).await;
         }
 
         adapter.stop_scan().await?;
